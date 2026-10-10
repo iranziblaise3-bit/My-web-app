@@ -1,0 +1,1636 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Settings as SettingsIcon,
+  Volume2,
+  VolumeX,
+  Smartphone,
+  Maximize2,
+  Minimize2,
+  Check,
+  X,
+  Sliders,
+  Vibrate,
+  Palette,
+  Sparkles,
+} from 'lucide-react';
+
+/* =========================================================================
+   TYPES & INTERFACES
+   ========================================================================= */
+
+export type GameState = 'ready' | 'running' | 'paused' | 'timeout';
+export type PlayerId = 1 | 2;
+
+export interface TimePreset {
+  id: string;
+  name: string;
+  category: 'Bullet' | 'Blitz' | 'Rapid' | 'Classical';
+  baseMinutes: number;
+  baseSeconds: number;
+  incrementSeconds: number;
+  description: string;
+}
+
+export interface ClockSettings {
+  p1BaseMinutes: number;
+  p1BaseSeconds: number;
+  p1IncrementSeconds: number;
+  p2BaseMinutes: number;
+  p2BaseSeconds: number;
+  p2IncrementSeconds: number;
+  isAsymmetric: boolean;
+  soundEnabled: boolean;
+  hapticsEnabled: boolean;
+  lowTimeWarningEnabled: boolean;
+  theme: 'tournament' | 'noir' | 'emerald' | 'crimson';
+  oppositeFacing: boolean;
+  showTenthsThresholdSeconds: number;
+  showMoveCount: boolean;
+}
+
+export interface ThemeStyles {
+  id: string;
+  name: string;
+  inactiveBg: string;
+  inactiveText: string;
+  activeBg: string;
+  activeText: string;
+  lowTimeActiveBg: string;
+  lowTimeActiveText: string;
+  timeoutBg: string;
+  timeoutText: string;
+  accentColor: string;
+}
+
+export interface FormattedTime {
+  display: string;
+  minutesPart: string;
+  secondsPart: string;
+  tenthsPart?: string;
+  isLowTime: boolean;
+  isExpired: boolean;
+}
+
+/* =========================================================================
+   CONSTANTS & PRESETS
+   ========================================================================= */
+
+export const THEMES: Record<string, ThemeStyles> = {
+  tournament: {
+    id: 'tournament',
+    name: 'Classic Tournament',
+    inactiveBg: 'bg-zinc-950',
+    inactiveText: 'text-zinc-500',
+    activeBg: 'bg-zinc-100',
+    activeText: 'text-zinc-950',
+    lowTimeActiveBg: 'bg-amber-300',
+    lowTimeActiveText: 'text-amber-950',
+    timeoutBg: 'bg-red-900',
+    timeoutText: 'text-red-100',
+    accentColor: '#f4f4f5',
+  },
+  emerald: {
+    id: 'emerald',
+    name: 'Grandmaster Green',
+    inactiveBg: 'bg-zinc-950',
+    inactiveText: 'text-emerald-950/60 text-zinc-500',
+    activeBg: 'bg-emerald-600',
+    activeText: 'text-white',
+    lowTimeActiveBg: 'bg-amber-500',
+    lowTimeActiveText: 'text-zinc-950',
+    timeoutBg: 'bg-rose-950',
+    timeoutText: 'text-rose-100',
+    accentColor: '#059669',
+  },
+  noir: {
+    id: 'noir',
+    name: 'Onyx & Ice',
+    inactiveBg: 'bg-black',
+    inactiveText: 'text-neutral-600',
+    activeBg: 'bg-neutral-900 text-cyan-50 ring-2 ring-cyan-400/80',
+    activeText: 'text-white',
+    lowTimeActiveBg: 'bg-rose-950 ring-2 ring-rose-400',
+    lowTimeActiveText: 'text-rose-100',
+    timeoutBg: 'bg-red-950 ring-4 ring-red-500',
+    timeoutText: 'text-red-200',
+    accentColor: '#22d3ee',
+  },
+  crimson: {
+    id: 'crimson',
+    name: 'Speed Chess Crimson',
+    inactiveBg: 'bg-stone-950',
+    inactiveText: 'text-stone-600',
+    activeBg: 'bg-stone-200',
+    activeText: 'text-stone-950',
+    lowTimeActiveBg: 'bg-red-600',
+    lowTimeActiveText: 'text-white',
+    timeoutBg: 'bg-red-950',
+    timeoutText: 'text-red-100',
+    accentColor: '#dc2626',
+  },
+};
+
+export const TIME_PRESETS: TimePreset[] = [
+  { id: 'bullet-1-0', name: '1 min', category: 'Bullet', baseMinutes: 1, baseSeconds: 0, incrementSeconds: 0, description: '1 | 0 Bullet' },
+  { id: 'bullet-1-1', name: '1 + 1', category: 'Bullet', baseMinutes: 1, baseSeconds: 0, incrementSeconds: 1, description: '1 | 1 Fischer' },
+  { id: 'bullet-2-1', name: '2 + 1', category: 'Bullet', baseMinutes: 2, baseSeconds: 0, incrementSeconds: 1, description: '2 | 1 Bullet' },
+  { id: 'blitz-3-0', name: '3 min', category: 'Blitz', baseMinutes: 3, baseSeconds: 0, incrementSeconds: 0, description: '3 | 0 Blitz' },
+  { id: 'blitz-3-2', name: '3 + 2', category: 'Blitz', baseMinutes: 3, baseSeconds: 0, incrementSeconds: 2, description: '3 | 2 FIDE Blitz' },
+  { id: 'blitz-5-0', name: '5 min', category: 'Blitz', baseMinutes: 5, baseSeconds: 0, incrementSeconds: 0, description: '5 | 0 Blitz' },
+  { id: 'blitz-5-3', name: '5 + 3', category: 'Blitz', baseMinutes: 5, baseSeconds: 0, incrementSeconds: 3, description: '5 | 3 Tournament' },
+  { id: 'rapid-10-0', name: '10 min', category: 'Rapid', baseMinutes: 10, baseSeconds: 0, incrementSeconds: 0, description: '10 | 0 Rapid' },
+  { id: 'rapid-15-10', name: '15 + 10', category: 'Rapid', baseMinutes: 15, baseSeconds: 0, incrementSeconds: 10, description: '15 | 10 FIDE Rapid' },
+  { id: 'classical-30-0', name: '30 min', category: 'Classical', baseMinutes: 30, baseSeconds: 0, incrementSeconds: 0, description: '30 | 0 Classical' },
+];
+
+const DEFAULT_SETTINGS: ClockSettings = {
+  p1BaseMinutes: 3,
+  p1BaseSeconds: 0,
+  p1IncrementSeconds: 2,
+  p2BaseMinutes: 3,
+  p2BaseSeconds: 0,
+  p2IncrementSeconds: 2,
+  isAsymmetric: false,
+  soundEnabled: true,
+  hapticsEnabled: true,
+  lowTimeWarningEnabled: true,
+  theme: 'tournament',
+  oppositeFacing: true,
+  showTenthsThresholdSeconds: 20,
+  showMoveCount: true,
+};
+
+/* =========================================================================
+   WEB AUDIO API SYNTHESIZER & HAPTICS
+   ========================================================================= */
+
+class SoundEngine {
+  private ctx: AudioContext | null = null;
+  private isMuted: boolean = false;
+
+  private getContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    if (!this.ctx) {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+    return this.ctx;
+  }
+
+  public init() {
+    this.getContext();
+  }
+
+  public setMuted(muted: boolean) {
+    this.isMuted = muted;
+  }
+
+  /**
+   * Ultra-sharp, crisp mechanical tournament clock switch sound.
+   */
+  public playMechanicalClick() {
+    if (this.isMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+
+      // 1. Ultra-sharp transient strike (high-frequency downward snap)
+      const sharpOsc = ctx.createOscillator();
+      const sharpGain = ctx.createGain();
+      sharpOsc.type = 'triangle';
+      sharpOsc.frequency.setValueAtTime(3600, now);
+      sharpOsc.frequency.exponentialRampToValueAtTime(320, now + 0.015);
+
+      sharpGain.gain.setValueAtTime(1.0, now);
+      sharpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.015);
+
+      sharpOsc.connect(sharpGain);
+      sharpGain.connect(ctx.destination);
+
+      sharpOsc.start(now);
+      sharpOsc.stop(now + 0.018);
+
+      // 2. Crisp metallic/plastic snap (high-pass filtered white noise burst)
+      const bufferSize = Math.floor(ctx.sampleRate * 0.018);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+      }
+
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(3200, now);
+      filter.Q.setValueAtTime(2.5, now);
+
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.95, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.016);
+
+      noise.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(ctx.destination);
+
+      noise.start(now);
+      noise.stop(now + 0.018);
+
+      // 3. Crisp secondary microswitch mechanical snap (at +4ms)
+      const snapOsc = ctx.createOscillator();
+      const snapGain = ctx.createGain();
+      snapOsc.type = 'square';
+      snapOsc.frequency.setValueAtTime(2200, now + 0.004);
+      snapOsc.frequency.exponentialRampToValueAtTime(450, now + 0.02);
+
+      const snapFilter = ctx.createBiquadFilter();
+      snapFilter.type = 'bandpass';
+      snapFilter.frequency.setValueAtTime(1800, now + 0.004);
+
+      snapGain.gain.setValueAtTime(0.001, now);
+      snapGain.gain.setValueAtTime(0.7, now + 0.004);
+      snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+
+      snapOsc.connect(snapFilter);
+      snapFilter.connect(snapGain);
+      snapGain.connect(ctx.destination);
+
+      snapOsc.start(now + 0.004);
+      snapOsc.stop(now + 0.022);
+    } catch {
+      // Audio failsafe
+    }
+  }
+
+  /**
+   * Urgent low-time warning beep (fires once per second when remaining time <= 10s).
+   */
+  public playLowTimeWarning(remainingSeconds: number) {
+    if (this.isMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      const baseFreq = remainingSeconds <= 3 ? 1046.5 : remainingSeconds <= 5 ? 987.77 : 880.0;
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(baseFreq, now);
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2400, now);
+
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.45, now + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } catch {
+      // Audio failsafe
+    }
+  }
+
+  /**
+   * Loud timeout buzzer / alarm when flag falls (0:00).
+   */
+  public playTimeoutAlarm() {
+    if (this.isMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+      const freqs = [620, 520, 415];
+      freqs.forEach((freq, idx) => {
+        const startTime = now + idx * 0.14;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, startTime);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1200, startTime);
+
+        gain.gain.setValueAtTime(0.001, startTime);
+        gain.gain.linearRampToValueAtTime(0.6, startTime + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.12);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(startTime);
+        osc.stop(startTime + 0.13);
+      });
+    } catch {
+      // Audio failsafe
+    }
+  }
+
+  public playUiClick() {
+    if (this.isMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(200, now + 0.03);
+
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.035);
+    } catch {
+      // Audio failsafe
+    }
+  }
+}
+
+export const soundEngine = new SoundEngine();
+
+export function triggerHaptic(durationMs: number | number[] = 80) {
+  if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+    try {
+      navigator.vibrate(durationMs);
+    } catch {
+      // Failsafe
+    }
+  }
+}
+
+/* =========================================================================
+   TIME FORMAT UTILITY
+   ========================================================================= */
+
+export function formatClockTime(
+  ms: number,
+  showTenthsThresholdSec: number = 20
+): FormattedTime {
+  if (ms <= 0) {
+    return {
+      display: '0:00.0',
+      minutesPart: '0',
+      secondsPart: '00',
+      tenthsPart: '0',
+      isLowTime: true,
+      isExpired: true,
+    };
+  }
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const tenths = Math.floor((ms % 1000) / 100);
+
+  const isLowTime = totalSeconds <= 10;
+  const isSubThreshold = totalSeconds < showTenthsThresholdSec;
+
+  if (hours > 0) {
+    const formattedM = minutes.toString().padStart(2, '0');
+    const formattedS = seconds.toString().padStart(2, '0');
+    return {
+      display: `${hours}:${formattedM}:${formattedS}`,
+      minutesPart: `${hours}:${formattedM}`,
+      secondsPart: formattedS,
+      isLowTime: false,
+      isExpired: false,
+    };
+  }
+
+  const formattedM = minutes.toString();
+  const formattedS = seconds.toString().padStart(2, '0');
+
+  if (isSubThreshold) {
+    return {
+      display: `${formattedM}:${formattedS}.${tenths}`,
+      minutesPart: formattedM,
+      secondsPart: formattedS,
+      tenthsPart: tenths.toString(),
+      isLowTime,
+      isExpired: false,
+    };
+  }
+
+  return {
+    display: `${formattedM}:${formattedS}`,
+    minutesPart: formattedM,
+    secondsPart: formattedS,
+    isLowTime,
+    isExpired: false,
+  };
+}
+
+/* =========================================================================
+   CLOCK PANEL COMPONENT (Strict Countdown Only)
+   ========================================================================= */
+
+interface ClockPanelProps {
+  player: PlayerId;
+  playerName: string;
+  timeMs: number;
+  isActive: boolean;
+  gameState: GameState;
+  isTimeoutWinner: boolean;
+  isTimeoutLoser: boolean;
+  rotated: boolean;
+  theme: ThemeStyles;
+  showTenthsThreshold: number;
+  onPanelTap: (player: PlayerId) => void;
+}
+
+export const ClockPanel: React.FC<ClockPanelProps> = ({
+  player,
+  playerName,
+  timeMs,
+  isActive,
+  gameState,
+  isTimeoutWinner,
+  isTimeoutLoser,
+  rotated,
+  theme,
+  showTenthsThreshold,
+  onPanelTap,
+}) => {
+  const [isJolting, setIsJolting] = useState(false);
+
+  const formatted = useMemo(
+    () => formatClockTime(timeMs, showTenthsThreshold),
+    [timeMs, showTenthsThreshold]
+  );
+
+  const isLowTimeActive = isActive && formatted.isLowTime && gameState === 'running';
+
+  let bgClass = theme.inactiveBg;
+  let textClass = theme.inactiveText;
+
+  if (isTimeoutLoser) {
+    bgClass = theme.timeoutBg;
+    textClass = theme.timeoutText;
+  } else if (isTimeoutWinner) {
+    bgClass = 'bg-emerald-950';
+    textClass = 'text-emerald-100';
+  } else if (isLowTimeActive) {
+    bgClass = theme.lowTimeActiveBg;
+    textClass = theme.lowTimeActiveText;
+  } else if (isActive) {
+    bgClass = theme.activeBg;
+    textClass = theme.activeText;
+  }
+
+  const triggerTapAction = () => {
+    setIsJolting(true);
+    setTimeout(() => setIsJolting(false), 70);
+    onPanelTap(player);
+  };
+
+  const handleTouch = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    triggerTapAction();
+  };
+
+  const handlePointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    e.preventDefault();
+    triggerTapAction();
+  };
+
+  return (
+    <div
+      onTouchStart={handleTouch}
+      onPointerDown={handlePointer}
+      role="button"
+      tabIndex={0}
+      aria-label={`${playerName} countdown: ${formatted.display}`}
+      className={`relative flex-1 w-full h-full select-none cursor-pointer overflow-hidden transition-none flex items-center justify-center p-4 sm:p-8 ${bgClass} ${textClass} ${
+        rotated ? 'rotate-180' : ''
+      } ${isJolting ? 'animate-haptic scale-[0.985]' : ''} active:scale-[0.985] touch-manipulation`}
+    >
+      <div className="relative z-10 flex items-baseline justify-center font-mono font-black tracking-tight select-none pointer-events-none">
+        <span className="text-7xl sm:text-9xl md:text-[11rem] lg:text-[13rem] tabular-nums leading-none">
+          {formatted.minutesPart}:{formatted.secondsPart}
+        </span>
+        {formatted.tenthsPart !== undefined && (
+          <span className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl tabular-nums opacity-85 ml-1 sm:ml-2">
+            .{formatted.tenthsPart}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================================
+   CENTER CONTROLS COMPONENT
+   ========================================================================= */
+
+interface CenterControlsProps {
+  gameState: GameState;
+  soundEnabled: boolean;
+  oppositeFacing: boolean;
+  onTogglePlayPause: () => void;
+  onResetGame: () => void;
+  onOpenSettings: () => void;
+  onToggleSound: () => void;
+  onToggleOppositeFacing: () => void;
+}
+
+export const CenterControls: React.FC<CenterControlsProps> = ({
+  gameState,
+  soundEnabled,
+  oppositeFacing,
+  onTogglePlayPause,
+  onResetGame,
+  onOpenSettings,
+  onToggleSound,
+  onToggleOppositeFacing,
+}) => {
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const handleResetClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    soundEngine.playUiClick();
+    if (gameState === 'ready') {
+      onResetGame();
+      return;
+    }
+    if (confirmReset) {
+      onResetGame();
+      setConfirmReset(false);
+    } else {
+      setConfirmReset(true);
+      setTimeout(() => {
+        setConfirmReset(false);
+      }, 3500);
+    }
+  };
+
+  const handleFullscreenToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    soundEngine.playUiClick();
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
+
+  return (
+    <div
+      onPointerDown={(e) => e.stopPropagation()}
+      className="relative z-30 w-full shrink-0 h-14 sm:h-16 bg-zinc-900 border-y border-zinc-800 flex items-center justify-between px-3 sm:px-6 shadow-xl"
+    >
+      <div className="flex items-center gap-1 sm:gap-2">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            soundEngine.playUiClick();
+            onOpenSettings();
+          }}
+          title="Time Controls & Settings"
+          aria-label="Settings"
+          className="p-2 sm:p-2.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 active:scale-95 transition-colors"
+        >
+          <SettingsIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            soundEngine.playUiClick();
+            onToggleSound();
+          }}
+          title={soundEnabled ? 'Mute Sounds' : 'Unmute Sounds'}
+          aria-label={soundEnabled ? 'Mute Sounds' : 'Unmute Sounds'}
+          className={`p-2 sm:p-2.5 rounded-lg active:scale-95 transition-colors ${
+            soundEnabled
+              ? 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+              : 'text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800/60'
+          }`}
+        >
+          {soundEnabled ? (
+            <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
+          ) : (
+            <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            soundEngine.playUiClick();
+            onToggleOppositeFacing();
+          }}
+          title={oppositeFacing ? 'Opposite Facing (180° enabled)' : 'Same Direction Facing'}
+          aria-label="Toggle clock orientation"
+          className={`p-2 sm:p-2.5 rounded-lg active:scale-95 transition-colors ${
+            oppositeFacing ? 'text-emerald-400 hover:bg-zinc-800' : 'text-zinc-500 hover:text-white hover:bg-zinc-800'
+          }`}
+        >
+          <Smartphone
+            className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform ${
+              oppositeFacing ? 'rotate-180 text-emerald-400' : ''
+            }`}
+          />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            soundEngine.playUiClick();
+            onTogglePlayPause();
+          }}
+          title={gameState === 'running' ? 'Pause Game' : 'Resume Game'}
+          aria-label={gameState === 'running' ? 'Pause Game' : 'Resume Game'}
+          className={`h-10 sm:h-11 px-4 sm:px-6 rounded-full flex items-center justify-center gap-2 font-mono text-xs sm:text-sm font-semibold tracking-wide uppercase transition-all shadow-md active:scale-95 ${
+            gameState === 'running'
+              ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950 ring-2 ring-amber-400/40'
+              : gameState === 'paused'
+              ? 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 animate-pulse'
+              : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+          }`}
+        >
+          {gameState === 'running' ? (
+            <>
+              <Pause className="w-4 h-4 fill-current" />
+              <span>Pause</span>
+            </>
+          ) : (
+            <>
+              <Play className="w-4 h-4 fill-current" />
+              <span>{gameState === 'paused' ? 'Resume' : 'Start'}</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      <div className="flex items-center gap-1 sm:gap-2">
+        <button
+          type="button"
+          onClick={handleResetClick}
+          title={confirmReset ? 'Tap again to confirm reset' : 'Reset Clock'}
+          aria-label="Reset Clock"
+          className={`p-2 sm:p-2.5 rounded-lg flex items-center gap-1.5 active:scale-95 transition-colors ${
+            confirmReset
+              ? 'bg-red-500 text-white font-mono text-xs font-bold px-3 py-1.5 animate-pulse'
+              : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+          }`}
+        >
+          {confirmReset ? (
+            <>
+              <Check className="w-4 h-4" />
+              <span>Reset?</span>
+            </>
+          ) : (
+            <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleFullscreenToggle}
+          title="Toggle Fullscreen"
+          aria-label="Toggle Fullscreen"
+          className="p-2 sm:p-2.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 active:scale-95 transition-colors hidden xs:flex"
+        >
+          {isFullscreen ? (
+            <Minimize2 className="w-4 h-4 sm:w-5 sm:h-5" />
+          ) : (
+            <Maximize2 className="w-4 h-4 sm:w-5 sm:h-5" />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================================
+   SETTINGS MODAL COMPONENT
+   ========================================================================= */
+
+interface SettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  settings: ClockSettings;
+  onSaveSettings: (newSettings: ClockSettings) => void;
+  onAdjustTime?: (player: 1 | 2, deltaSeconds: number) => void;
+  p1TimeMs?: number;
+  p2TimeMs?: number;
+}
+
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  isOpen,
+  onClose,
+  settings,
+  onSaveSettings,
+  onAdjustTime,
+  p1TimeMs,
+  p2TimeMs,
+}) => {
+  const [activeTab, setActiveTab] = useState<'presets' | 'custom' | 'audio' | 'arbiter'>('presets');
+  const [tempSettings, setTempSettings] = useState<ClockSettings>(settings);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTempSettings(settings);
+    }
+  }, [isOpen, settings]);
+
+  if (!isOpen) return null;
+
+  const handleSelectPreset = (preset: TimePreset) => {
+    soundEngine.playUiClick();
+    triggerHaptic(80);
+    const updated: ClockSettings = {
+      ...tempSettings,
+      p1BaseMinutes: preset.baseMinutes,
+      p1BaseSeconds: preset.baseSeconds,
+      p1IncrementSeconds: preset.incrementSeconds,
+      p2BaseMinutes: preset.baseMinutes,
+      p2BaseSeconds: preset.baseSeconds,
+      p2IncrementSeconds: preset.incrementSeconds,
+      isAsymmetric: false,
+    };
+    setTempSettings(updated);
+    onSaveSettings(updated);
+    onClose();
+  };
+
+  const handleApplyCustom = () => {
+    soundEngine.playUiClick();
+    triggerHaptic(80);
+    onSaveSettings(tempSettings);
+    onClose();
+  };
+
+  const testClickSound = () => {
+    soundEngine.playMechanicalClick();
+    triggerHaptic(80);
+  };
+
+  const testWarningSound = () => {
+    soundEngine.playLowTimeWarning(7);
+    triggerHaptic(80);
+  };
+
+  const testTimeoutSound = () => {
+    soundEngine.playTimeoutAlarm();
+    triggerHaptic([100, 50, 100, 50, 200]);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950/60">
+          <div className="flex items-center gap-2">
+            <Sliders className="w-5 h-5 text-amber-400" />
+            <h2 className="text-base font-bold text-white tracking-wide">Clock Configuration</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex items-center border-b border-zinc-800 bg-zinc-950/30 px-3 pt-2 gap-1 overflow-x-auto text-xs font-semibold">
+          <button
+            onClick={() => setActiveTab('presets')}
+            className={`px-3 py-2 rounded-t-lg transition-colors border-b-2 ${
+              activeTab === 'presets'
+                ? 'border-amber-400 text-amber-400 bg-zinc-900'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Presets
+          </button>
+          <button
+            onClick={() => setActiveTab('custom')}
+            className={`px-3 py-2 rounded-t-lg transition-colors border-b-2 ${
+              activeTab === 'custom'
+                ? 'border-amber-400 text-amber-400 bg-zinc-900'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Custom Time
+          </button>
+          <button
+            onClick={() => setActiveTab('audio')}
+            className={`px-3 py-2 rounded-t-lg transition-colors border-b-2 ${
+              activeTab === 'audio'
+                ? 'border-amber-400 text-amber-400 bg-zinc-900'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Audio & Haptics
+          </button>
+          {onAdjustTime && (
+            <button
+              onClick={() => setActiveTab('arbiter')}
+              className={`px-3 py-2 rounded-t-lg transition-colors border-b-2 ${
+                activeTab === 'arbiter'
+                  ? 'border-amber-400 text-amber-400 bg-zinc-900'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Adjust Time
+            </button>
+          )}
+        </div>
+
+        <div className="p-5 overflow-y-auto space-y-6 text-sm text-zinc-300">
+          {activeTab === 'presets' && (
+            <div className="space-y-4">
+              <div className="text-xs text-zinc-400">
+                Choose a tournament-standard time control. Selecting a preset immediately sets the clock.
+              </div>
+
+              {['Bullet', 'Blitz', 'Rapid', 'Classical'].map((category) => {
+                const categoryPresets = TIME_PRESETS.filter((p) => p.category === category);
+                return (
+                  <div key={category} className="space-y-2">
+                    <div className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+                      {category}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {categoryPresets.map((preset) => {
+                        const isCurrent =
+                          tempSettings.p1BaseMinutes === preset.baseMinutes &&
+                          tempSettings.p1BaseSeconds === preset.baseSeconds &&
+                          tempSettings.p1IncrementSeconds === preset.incrementSeconds;
+
+                        return (
+                          <button
+                            key={preset.id}
+                            onClick={() => handleSelectPreset(preset)}
+                            className={`p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
+                              isCurrent
+                                ? 'bg-amber-500/10 border-amber-500/80 text-white shadow-sm ring-1 ring-amber-500/40'
+                                : 'bg-zinc-800/60 border-zinc-750 text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <span className="font-bold text-sm font-mono">{preset.name}</span>
+                              {isCurrent && <Check className="w-3.5 h-3.5 text-amber-400" />}
+                            </div>
+                            <span className="text-[11px] text-zinc-400 mt-1">{preset.description}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {activeTab === 'custom' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-white">Equal Time Controls</h3>
+                  <p className="text-xs text-zinc-400">Both players start with the identical base time and increment.</p>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs">
+                  <span className={tempSettings.isAsymmetric ? 'text-amber-400 font-medium' : 'text-zinc-400'}>
+                    Odds/Handicap
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={tempSettings.isAsymmetric}
+                    onChange={(e) =>
+                      setTempSettings({ ...tempSettings, isAsymmetric: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded bg-zinc-800 border-zinc-700 text-amber-500 focus:ring-0"
+                  />
+                </label>
+              </div>
+
+              <div className="bg-zinc-950/60 p-4 rounded-xl border border-zinc-800 space-y-3">
+                <div className="font-semibold text-xs tracking-wider uppercase text-zinc-400">
+                  {tempSettings.isAsymmetric ? 'Player 1 (White)' : 'Base Time & Increment'}
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Minutes</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={180}
+                      value={tempSettings.p1BaseMinutes}
+                      onChange={(e) => {
+                        const val = Math.max(0, parseInt(e.target.value) || 0);
+                        setTempSettings({
+                          ...tempSettings,
+                          p1BaseMinutes: val,
+                          ...(tempSettings.isAsymmetric ? {} : { p2BaseMinutes: val }),
+                        });
+                      }}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white text-base text-center"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Seconds</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={tempSettings.p1BaseSeconds}
+                      onChange={(e) => {
+                        const val = Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
+                        setTempSettings({
+                          ...tempSettings,
+                          p1BaseSeconds: val,
+                          ...(tempSettings.isAsymmetric ? {} : { p2BaseSeconds: val }),
+                        });
+                      }}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white text-base text-center"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1">Increment (+s)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={60}
+                      value={tempSettings.p1IncrementSeconds}
+                      onChange={(e) => {
+                        const val = Math.max(0, parseInt(e.target.value) || 0);
+                        setTempSettings({
+                          ...tempSettings,
+                          p1IncrementSeconds: val,
+                          ...(tempSettings.isAsymmetric ? {} : { p2IncrementSeconds: val }),
+                        });
+                      }}
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white text-base text-center"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {tempSettings.isAsymmetric && (
+                <div className="bg-zinc-950/60 p-4 rounded-xl border border-zinc-800 space-y-3">
+                  <div className="font-semibold text-xs tracking-wider uppercase text-amber-400">
+                    Player 2 (Black) - Handicap
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 mb-1">Minutes</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={180}
+                        value={tempSettings.p2BaseMinutes}
+                        onChange={(e) =>
+                          setTempSettings({
+                            ...tempSettings,
+                            p2BaseMinutes: Math.max(0, parseInt(e.target.value) || 0),
+                          })
+                        }
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white text-base text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 mb-1">Seconds</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={59}
+                        value={tempSettings.p2BaseSeconds}
+                        onChange={(e) =>
+                          setTempSettings({
+                            ...tempSettings,
+                            p2BaseSeconds: Math.min(59, Math.max(0, parseInt(e.target.value) || 0)),
+                          })
+                        }
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white text-base text-center"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-zinc-400 mb-1">Increment (+s)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={60}
+                        value={tempSettings.p2IncrementSeconds}
+                        onChange={(e) =>
+                          setTempSettings({
+                            ...tempSettings,
+                            p2IncrementSeconds: Math.max(0, parseInt(e.target.value) || 0),
+                          })
+                        }
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-white text-base text-center"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase text-zinc-400">
+                  <Palette className="w-3.5 h-3.5" />
+                  Visual Contrast Theme
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.values(THEMES).map((thm) => (
+                    <button
+                      key={thm.id}
+                      onClick={() =>
+                        setTempSettings({
+                          ...tempSettings,
+                          theme: thm.id as ClockSettings['theme'],
+                        })
+                      }
+                      className={`p-3 rounded-xl border text-left flex items-center justify-between transition-all ${
+                        tempSettings.theme === thm.id
+                          ? 'border-amber-400 bg-zinc-800 text-white'
+                          : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-xs font-medium">{thm.name}</span>
+                      <div
+                        className="w-4 h-4 rounded-full border border-white/20"
+                        style={{ backgroundColor: thm.accentColor }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleApplyCustom}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded-xl transition-colors shadow-lg shadow-amber-500/10"
+              >
+                Apply Custom Settings
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'audio' && (
+            <div className="space-y-5">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <Volume2 className="w-5 h-5 text-amber-400" />
+                    <div>
+                      <div className="font-semibold text-white text-sm">Master Sound</div>
+                      <div className="text-xs text-zinc-400">Plays sharp mechanical clicks and alarms</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={tempSettings.soundEnabled}
+                    onChange={(e) => {
+                      const updated = { ...tempSettings, soundEnabled: e.target.checked };
+                      setTempSettings(updated);
+                      soundEngine.setMuted(!e.target.checked);
+                      onSaveSettings(updated);
+                    }}
+                    className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-amber-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <Sparkles className="w-5 h-5 text-red-400" />
+                    <div>
+                      <div className="font-semibold text-white text-sm">Low-Time Warning Audio</div>
+                      <div className="text-xs text-zinc-400">Distinct urgent beep every second when time drops ≤ 10s</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={tempSettings.lowTimeWarningEnabled}
+                    onChange={(e) => {
+                      const updated = {
+                        ...tempSettings,
+                        lowTimeWarningEnabled: e.target.checked,
+                      };
+                      setTempSettings(updated);
+                      onSaveSettings(updated);
+                    }}
+                    className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-amber-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800">
+                  <div className="flex items-center gap-3">
+                    <Vibrate className="w-5 h-5 text-emerald-400" />
+                    <div>
+                      <div className="font-semibold text-white text-sm">Haptic Tap Vibration</div>
+                      <div className="text-xs text-zinc-400">
+                        {typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function'
+                          ? 'Hardware vibration motor: Active & enabled'
+                          : 'Hardware motor: Not supported on this browser/desktop (Visual haptic tremor & sharp audio enabled)'}
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={tempSettings.hapticsEnabled}
+                    onChange={(e) => {
+                      const updated = {
+                        ...tempSettings,
+                        hapticsEnabled: e.target.checked,
+                      };
+                      setTempSettings(updated);
+                      onSaveSettings(updated);
+                    }}
+                    className="w-5 h-5 rounded bg-zinc-800 border-zinc-700 text-amber-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-zinc-950/40 rounded-xl border border-zinc-800 space-y-2.5">
+                <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  Acoustic Feedback Previews
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={testClickSound}
+                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-750 text-xs font-medium text-white rounded-lg transition-colors border border-zinc-700/60 flex flex-col items-center justify-center gap-1"
+                  >
+                    <span>Tap Click</span>
+                    <span className="text-[10px] text-zinc-400">Sharp Mechanical</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={testWarningSound}
+                    className="py-2.5 px-3 bg-amber-950/40 hover:bg-amber-900/40 text-xs font-medium text-amber-200 rounded-lg transition-colors border border-amber-800/60 flex flex-col items-center justify-center gap-1"
+                  >
+                    <span>≤ 10s Beep</span>
+                    <span className="text-[10px] text-amber-400">Urgent</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={testTimeoutSound}
+                    className="py-2.5 px-3 bg-red-950/40 hover:bg-red-900/40 text-xs font-medium text-red-200 rounded-lg transition-colors border border-red-800/60 flex flex-col items-center justify-center gap-1"
+                  >
+                    <span>Time Out</span>
+                    <span className="text-[10px] text-red-400">Alarm</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'arbiter' && onAdjustTime && (
+            <div className="space-y-5">
+              <div className="text-xs text-zinc-400">
+                Adjust remaining game time for either player during penalties or official arbiter corrections.
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white text-xs uppercase tracking-wider">Player 1 (White)</span>
+                    <span className="font-mono text-xs text-amber-400 font-semibold">
+                      Current: {Math.max(0, Math.floor((p1TimeMs || 0) / 1000))}s
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 font-mono text-xs font-bold">
+                    <button onClick={() => onAdjustTime(1, 60)} className="py-2 bg-zinc-800 text-emerald-400 rounded-lg border border-zinc-700">+1 min</button>
+                    <button onClick={() => onAdjustTime(1, 15)} className="py-2 bg-zinc-800 text-emerald-400 rounded-lg border border-zinc-700">+15s</button>
+                    <button onClick={() => onAdjustTime(1, -15)} className="py-2 bg-zinc-800 text-rose-400 rounded-lg border border-zinc-700">-15s</button>
+                    <button onClick={() => onAdjustTime(1, -60)} className="py-2 bg-zinc-800 text-rose-400 rounded-lg border border-zinc-700">-1 min</button>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-zinc-950/60 rounded-xl border border-zinc-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white text-xs uppercase tracking-wider">Player 2 (Black)</span>
+                    <span className="font-mono text-xs text-amber-400 font-semibold">
+                      Current: {Math.max(0, Math.floor((p2TimeMs || 0) / 1000))}s
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 font-mono text-xs font-bold">
+                    <button onClick={() => onAdjustTime(2, 60)} className="py-2 bg-zinc-800 text-emerald-400 rounded-lg border border-zinc-700">+1 min</button>
+                    <button onClick={() => onAdjustTime(2, 15)} className="py-2 bg-zinc-800 text-emerald-400 rounded-lg border border-zinc-700">+15s</button>
+                    <button onClick={() => onAdjustTime(2, -15)} className="py-2 bg-zinc-800 text-rose-400 rounded-lg border border-zinc-700">-15s</button>
+                    <button onClick={() => onAdjustTime(2, -60)} className="py-2 bg-zinc-800 text-rose-400 rounded-lg border border-zinc-700">-1 min</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-zinc-800 bg-zinc-950/80 flex items-center justify-between text-xs text-zinc-500">
+          <span>Shortcuts: Space to switch · P to pause · R to reset</span>
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-white font-medium rounded-lg transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* =========================================================================
+   MAIN APP COMPONENT
+   ========================================================================= */
+
+export default function App() {
+  const [settings, setSettings] = useState<ClockSettings>(DEFAULT_SETTINGS);
+  const [gameState, setGameState] = useState<GameState>('ready');
+  const [activePlayer, setActivePlayer] = useState<PlayerId | null>(null);
+
+  const [p1TimeMs, setP1TimeMs] = useState<number>(
+    (DEFAULT_SETTINGS.p1BaseMinutes * 60 + DEFAULT_SETTINGS.p1BaseSeconds) * 1000
+  );
+  const [p2TimeMs, setP2TimeMs] = useState<number>(
+    (DEFAULT_SETTINGS.p2BaseMinutes * 60 + DEFAULT_SETTINGS.p2BaseSeconds) * 1000
+  );
+
+  const [p1Moves, setP1Moves] = useState<number>(0);
+  const [p2Moves, setP2Moves] = useState<number>(0);
+  const [timeoutWinner, setTimeoutWinner] = useState<PlayerId | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+
+  const p1TimeRef = useRef<number>(p1TimeMs);
+  const p2TimeRef = useRef<number>(p2TimeMs);
+  const activePlayerRef = useRef<PlayerId | null>(activePlayer);
+  const gameStateRef = useRef<GameState>(gameState);
+  const settingsRef = useRef<ClockSettings>(settings);
+
+  p1TimeRef.current = p1TimeMs;
+  p2TimeRef.current = p2TimeMs;
+  activePlayerRef.current = activePlayer;
+  gameStateRef.current = gameState;
+  settingsRef.current = settings;
+
+  useEffect(() => {
+    const handleFirstTouch = () => {
+      soundEngine.init();
+      window.removeEventListener('pointerdown', handleFirstTouch);
+      window.removeEventListener('keydown', handleFirstTouch);
+    };
+    window.addEventListener('pointerdown', handleFirstTouch, { once: true });
+    window.addEventListener('keydown', handleFirstTouch, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstTouch);
+      window.removeEventListener('keydown', handleFirstTouch);
+    };
+  }, []);
+
+  useEffect(() => {
+    soundEngine.setMuted(!settings.soundEnabled);
+  }, [settings.soundEnabled]);
+
+  // High-precision clock tick loop
+  useEffect(() => {
+    if (gameState !== 'running' || !activePlayer) return;
+
+    let lastTimestamp = performance.now();
+    let frameId: number;
+
+    const tick = (now: DOMHighResTimeStamp) => {
+      const delta = now - lastTimestamp;
+      lastTimestamp = now;
+
+      const currentActive = activePlayerRef.current;
+      if (!currentActive || gameStateRef.current !== 'running') return;
+
+      const currentSettings = settingsRef.current;
+      const isPlayer1 = currentActive === 1;
+      const currentRemaining = isPlayer1 ? p1TimeRef.current : p2TimeRef.current;
+      const nextRemaining = Math.max(0, currentRemaining - delta);
+
+      const prevSec = Math.ceil(currentRemaining / 1000);
+      const nextSec = Math.ceil(nextRemaining / 1000);
+
+      // Low-time warning audio (exact once per second tick <= 10s)
+      if (
+        currentSettings.lowTimeWarningEnabled &&
+        currentSettings.soundEnabled &&
+        nextRemaining > 0 &&
+        nextSec <= 10 &&
+        nextSec < prevSec
+      ) {
+        soundEngine.playLowTimeWarning(nextSec);
+        if (currentSettings.hapticsEnabled) {
+          triggerHaptic(80);
+        }
+      }
+
+      if (isPlayer1) {
+        p1TimeRef.current = nextRemaining;
+        setP1TimeMs(nextRemaining);
+      } else {
+        p2TimeRef.current = nextRemaining;
+        setP2TimeMs(nextRemaining);
+      }
+
+      // Timeout check
+      if (nextRemaining <= 0) {
+        if (currentSettings.soundEnabled) {
+          soundEngine.playTimeoutAlarm();
+        }
+        if (currentSettings.hapticsEnabled) {
+          triggerHaptic([120, 60, 120, 60, 250]);
+        }
+        setGameState('timeout');
+        setTimeoutWinner(isPlayer1 ? 2 : 1);
+        return;
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [gameState, activePlayer]);
+
+  // Instantaneous turn-switching tap handler
+  const handlePlayerTap = useCallback(
+    (player: PlayerId) => {
+      soundEngine.init();
+      const currentSettings = settingsRef.current;
+      if (currentSettings.hapticsEnabled) {
+        triggerHaptic(80);
+      }
+      if (currentSettings.soundEnabled) {
+        soundEngine.playMechanicalClick();
+      }
+
+      const currentGameState = gameStateRef.current;
+      const currentActive = activePlayerRef.current;
+
+      if (currentGameState === 'timeout') {
+        handleResetGame();
+        return;
+      }
+
+      if (currentGameState === 'paused') {
+        gameStateRef.current = 'running';
+        setGameState('running');
+        return;
+      }
+
+      if (currentGameState === 'ready') {
+        const nextActive: PlayerId = player === 1 ? 2 : 1;
+        activePlayerRef.current = nextActive;
+        gameStateRef.current = 'running';
+        setActivePlayer(nextActive);
+        setGameState('running');
+
+        if (player === 1) {
+          setP1Moves(1);
+          if (currentSettings.p1IncrementSeconds > 0) {
+            const incMs = currentSettings.p1IncrementSeconds * 1000;
+            p1TimeRef.current += incMs;
+            setP1TimeMs((t) => t + incMs);
+          }
+        } else {
+          setP2Moves(1);
+          if (currentSettings.p2IncrementSeconds > 0) {
+            const incMs = currentSettings.p2IncrementSeconds * 1000;
+            p2TimeRef.current += incMs;
+            setP2TimeMs((t) => t + incMs);
+          }
+        }
+        return;
+      }
+
+      if (currentGameState === 'running') {
+        const whoMoved: PlayerId = currentActive || player;
+        const nextActive: PlayerId = whoMoved === 1 ? 2 : 1;
+
+        if (whoMoved === 1) {
+          setP1Moves((m) => m + 1);
+          if (currentSettings.p1IncrementSeconds > 0) {
+            const incMs = currentSettings.p1IncrementSeconds * 1000;
+            p1TimeRef.current += incMs;
+            setP1TimeMs((t) => t + incMs);
+          }
+        } else {
+          setP2Moves((m) => m + 1);
+          if (currentSettings.p2IncrementSeconds > 0) {
+            const incMs = currentSettings.p2IncrementSeconds * 1000;
+            p2TimeRef.current += incMs;
+            setP2TimeMs((t) => t + incMs);
+          }
+        }
+
+        activePlayerRef.current = nextActive;
+        setActivePlayer(nextActive);
+      }
+    },
+    []
+  );
+
+  const handleTogglePlayPause = () => {
+    if (gameState === 'ready') {
+      setActivePlayer(1);
+      setGameState('running');
+    } else if (gameState === 'running') {
+      setGameState('paused');
+    } else if (gameState === 'paused') {
+      setGameState('running');
+    } else if (gameState === 'timeout') {
+      handleResetGame();
+    }
+  };
+
+  const handleResetGame = () => {
+    setGameState('ready');
+    setActivePlayer(null);
+    setTimeoutWinner(null);
+    setP1Moves(0);
+    setP2Moves(0);
+
+    const p1Ms = (settings.p1BaseMinutes * 60 + settings.p1BaseSeconds) * 1000;
+    const p2Ms = (settings.p2BaseMinutes * 60 + settings.p2BaseSeconds) * 1000;
+    setP1TimeMs(p1Ms);
+    setP2TimeMs(p2Ms);
+    p1TimeRef.current = p1Ms;
+    p2TimeRef.current = p2Ms;
+  };
+
+  const handleSaveSettings = (newSettings: ClockSettings) => {
+    setSettings(newSettings);
+    setGameState('ready');
+    setActivePlayer(null);
+    setTimeoutWinner(null);
+    setP1Moves(0);
+    setP2Moves(0);
+
+    const p1Ms = (newSettings.p1BaseMinutes * 60 + newSettings.p1BaseSeconds) * 1000;
+    const p2Ms = (newSettings.p2BaseMinutes * 60 + newSettings.p2BaseSeconds) * 1000;
+    setP1TimeMs(p1Ms);
+    setP2TimeMs(p2Ms);
+    p1TimeRef.current = p1Ms;
+    p2TimeRef.current = p2Ms;
+  };
+
+  const handleAdjustTime = (player: PlayerId, deltaSeconds: number) => {
+    const deltaMs = deltaSeconds * 1000;
+    if (player === 1) {
+      setP1TimeMs((t) => {
+        const next = Math.max(0, t + deltaMs);
+        p1TimeRef.current = next;
+        return next;
+      });
+    } else {
+      setP2TimeMs((t) => {
+        const next = Math.max(0, t + deltaMs);
+        p2TimeRef.current = next;
+        return next;
+      });
+    }
+  };
+
+  // Keyboard navigation for desktop
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        isSettingsOpen ||
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA'
+      ) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (gameState === 'running' && activePlayer) {
+          handlePlayerTap(activePlayer);
+        } else {
+          handleTogglePlayPause();
+        }
+      } else if (e.code === 'KeyP') {
+        e.preventDefault();
+        handleTogglePlayPause();
+      } else if (e.code === 'KeyR') {
+        e.preventDefault();
+        handleResetGame();
+      } else if (e.code === 'ArrowLeft' || e.code === 'KeyZ' || e.code === 'Digit1') {
+        e.preventDefault();
+        handlePlayerTap(1);
+      } else if (e.code === 'ArrowRight' || e.code === 'Slash' || e.code === 'KeyM' || e.code === 'Digit2') {
+        e.preventDefault();
+        handlePlayerTap(2);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState, activePlayer, isSettingsOpen, handlePlayerTap]);
+
+  const activeTheme = THEMES[settings.theme] || THEMES.tournament;
+
+  return (
+    <main className="w-screen h-screen overflow-hidden flex flex-col bg-zinc-950 text-white select-none touch-none">
+      <ClockPanel
+        player={1}
+        playerName="Player 1"
+        timeMs={p1TimeMs}
+        isActive={activePlayer === 1 && gameState === 'running'}
+        gameState={gameState}
+        isTimeoutWinner={timeoutWinner === 1}
+        isTimeoutLoser={timeoutWinner === 2}
+        rotated={settings.oppositeFacing}
+        theme={activeTheme}
+        showTenthsThreshold={settings.showTenthsThresholdSeconds}
+        onPanelTap={handlePlayerTap}
+      />
+
+      <CenterControls
+        gameState={gameState}
+        soundEnabled={settings.soundEnabled}
+        oppositeFacing={settings.oppositeFacing}
+        onTogglePlayPause={handleTogglePlayPause}
+        onResetGame={handleResetGame}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onToggleSound={() =>
+          setSettings((prev) => ({ ...prev, soundEnabled: !prev.soundEnabled }))
+        }
+        onToggleOppositeFacing={() =>
+          setSettings((prev) => ({
+            ...prev,
+            oppositeFacing: !prev.oppositeFacing,
+          }))
+        }
+      />
+
+      <ClockPanel
+        player={2}
+        playerName="Player 2"
+        timeMs={p2TimeMs}
+        isActive={activePlayer === 2 && gameState === 'running'}
+        gameState={gameState}
+        isTimeoutWinner={timeoutWinner === 2}
+        isTimeoutLoser={timeoutWinner === 1}
+        rotated={false}
+        theme={activeTheme}
+        showTenthsThreshold={settings.showTenthsThresholdSeconds}
+        onPanelTap={handlePlayerTap}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onSaveSettings={handleSaveSettings}
+        onAdjustTime={handleAdjustTime}
+        p1TimeMs={p1TimeMs}
+        p2TimeMs={p2TimeMs}
+      />
+    </main>
+  );
+}
